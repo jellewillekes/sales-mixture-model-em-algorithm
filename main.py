@@ -75,7 +75,7 @@ def MStep(y, X, W):
         theta[k] = np.linalg.solve(XTX, XTy)
 
         # Regularize pi values
-        pi[k] = np.clip(weights.mean(), 1e-10, 1 - 1e-10)
+        pi[k] = weights.mean()
 
     # Ensure pi sums to 1
     pi = pi / pi.sum()
