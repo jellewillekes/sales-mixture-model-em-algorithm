@@ -7,21 +7,38 @@ from scipy.special import logsumexp
 from sklearn.cluster import KMeans
 
 
-# Define the LogL function to calculate the log-likelihood
 def LogL(theta, pi, y, X):
-    T, N = y.shape
-    K = len(pi)
+    K = pi.shape[0]
+    N, T = y.shape
     log_likelihood = 0
 
     for i in range(N):
-        ll_store = np.array([
-            np.sum(norm.logpdf(y[:, i], loc=theta[k * 2] + theta[k * 2 + 1] * X[:, 1], scale=1)) + np.log(pi[k])
-            for k in range(K)
-        ])
-        max_ll = np.max(ll_store)
-        log_likelihood += max_ll + np.log(np.sum(np.exp(ll_store - max_ll)))
+        for t in range(T):
+            log_likelihood_it = -np.inf
+            for c in range(K):
+                alpha_c, beta_c = theta[c]
+                epsilon_it = y[i, t] - (alpha_c + beta_c * X[t, 1])
+
+                # Use log probability function directly to avoid underflow
+                log_phi_epsilon_it = norm.logpdf(epsilon_it, 0, 1)
+
+                # Adding a small constant to pi[c] to avoid log(0)
+                log_likelihood_it = np.logaddexp(log_likelihood_it, np.log(pi[c] + 1e-10) + log_phi_epsilon_it)
+
+            log_likelihood += log_likelihood_it
+
+    # Handle -inf or NaN in log likelihood
+    if np.isinf(log_likelihood) or np.isnan(log_likelihood):
+        log_likelihood = -np.inf
 
     return log_likelihood
+
+
+def phi(x, mu=0, sigma=1):
+    """
+    Density function for the normal distribution.
+    """
+    return (1 / (sigma * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
 
 
 # Define the EStep function for the Expectation step of the EM algorithm
@@ -31,44 +48,51 @@ def EStep(theta, pi, y, X):
     P = np.zeros((N, K))
 
     for k in range(K):
-        P[:, k] = norm.logpdf(y, loc=theta[k * 2] + theta[k * 2 + 1] * X[:, 1], scale=1).sum(axis=1) + np.log(pi[k])
+        alpha_k, beta_k = theta[k]
+        P[:, k] = norm.logpdf(y, loc=alpha_k + beta_k * X[:, 1], scale=1).sum(axis=1) + np.log(pi[k] + 1e-10)
 
+    # Subtract the logsumexp to normalize
     P = np.exp(P - logsumexp(P, axis=1)[:, None])
 
     return P
 
 
 # Define the MStep function for the Maximization step of the EM algorithm
-def MStep(y, X, P):
-    N, T = y.shape  # N: stores, T: weeks
-    K = P.shape[1]
-    theta = np.zeros(2 * K)
+def MStep(y, X, W):
+    N, T = y.shape
+    K = W.shape[1]
+    theta = np.zeros((K, 2))
     pi = np.zeros(K)
 
     for k in range(K):
-        weights = P[:, k]
-        X_weighted = X * weights[None, :]  # Broadcasting weights across the weeks for each store
+        weights = W[:, k][:, np.newaxis]
+        y_weighted = np.dot(y * weights, X)
 
-        # Weighted regression for each segment
-        XTX = X_weighted @ X_weighted.T  # X'WX where W is the diagonal matrix of weights
-        XTy = X_weighted @ y[k, :]  # X'Wy
+        XTX = np.dot(X.T, X)
+        XTy = y_weighted.sum(axis=0)
 
-        theta_k = np.linalg.solve(XTX, XTy)  # Solve for theta (alpha, beta)
+        theta[k] = np.linalg.solve(XTX, XTy)
 
-        theta[k * 2: (k * 2) + 2] = theta_k
-        pi[k] = weights.mean()
+        # Regularize pi values
+        pi[k] = np.clip(weights.mean(), 1e-10, 1 - 1e-10)
+
+    # Ensure pi sums to 1
+    pi = pi / pi.sum()
 
     return theta, pi
 
 
 def initialize_parameters(y, K, method='quantiles'):
-    theta = np.zeros(2 * K)
+    # Initialize theta as a Kx2 array, where each row represents a segment with alpha and beta parameters
+    theta = np.zeros((K, 2))
     pi = np.full(K, 1.0 / K)
 
     if method == 'quantiles':
         for k in range(K):
-            theta[2 * k] = np.quantile(y, (k + 1) / (K + 1))
-            theta[2 * k + 1] = np.random.rand()
+            # Set alpha (intercept) as the quantile of y
+            theta[k, 0] = np.quantile(y, (k + 1) / (K + 1))
+            # Initialize beta (slope) randomly
+            theta[k, 1] = np.random.rand()
 
     elif method == 'kmeans':
         # Reshape y for KMeans
@@ -77,15 +101,17 @@ def initialize_parameters(y, K, method='quantiles'):
         centroids = kmeans.cluster_centers_.flatten()
 
         for k in range(K):
-            theta[2 * k] = centroids[k]
-            theta[2 * k + 1] = np.random.rand()  # or some other method to initialize slopes
+            # Set alpha (intercept) as the centroid
+            theta[k, 0] = centroids[k]
+            # Initialize beta (slope) randomly
+            theta[k, 1] = np.random.rand()  # or some other method to initialize slopes
 
     return theta, pi
 
 
 # Define the EM function for iterating the E and M steps
-def EM(K, y, X, tol=1e-5, max_iter=100):
-    theta, pi = initialize_parameters(y, K, method='kmeans')
+def EM(K, y, X, tol=1e-5, max_iter=10):
+    theta, pi = initialize_parameters(y, K, method='quantiles')
     prev_log_likelihood = -np.inf
     converged = False  # Flag to track convergence
 
@@ -102,8 +128,8 @@ def EM(K, y, X, tol=1e-5, max_iter=100):
         prev_log_likelihood = log_likelihood
 
         # Print every 10th iteration
-        if (iteration + 1) % 10 == 0:
-            print(f"Iteration {iteration + 1}, Log Likelihood: {log_likelihood}")
+        # if (iteration + 1) % 10 == 0:
+        print(f"Iteration {iteration + 1}, Log Likelihood: {log_likelihood}")
 
     # Final summary
     if not converged:
@@ -170,6 +196,7 @@ def run_analysis():
 
     # Apply the Estimate function for K = 2, 3, 4 and select the best model based on BIC
     for K in [2, 3, 4]:
+        print(f'\n Starting EM for {K} clusters:')
         theta, pi, log_likelihood = Estimate(K, y, X, n_init=10)
         num_params = 2 * K + K - 1
         bic = num_params * np.log(N * T) - 2 * log_likelihood
