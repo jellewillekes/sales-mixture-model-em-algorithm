@@ -4,6 +4,14 @@ import json
 
 from scipy.stats import norm
 from scipy.special import logsumexp
+
+"""I use sklearn for initializing parameters, I do not use sklearn for the EM algorithm itself. 
+ I do this such that the EM algorithm converges faster. Else, I use IQR strategy for initializing the
+ slopes of the parameters. Random initialization would simply take too long for convergence, also not stable.
+ Using a linear regression on aggregated sales data for initializing beta because it provides a data-driven
+ estimate of the relationship between price and sales, offering a realistic starting point for the price elasticity 
+ parameter in the model."""
+from sklearn.linear_model import LinearRegression
 from sklearn.cluster import KMeans
 
 
@@ -32,13 +40,6 @@ def LogL(theta, pi, y, X):
         log_likelihood = -np.inf
 
     return log_likelihood
-
-
-def phi(x, mu=0, sigma=1):
-    """
-    Density function for the normal distribution.
-    """
-    return (1 / (sigma * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
 
 
 # Define the EStep function for the Expectation step of the EM algorithm
@@ -82,38 +83,45 @@ def MStep(y, X, W):
     return theta, pi
 
 
-def initialize_parameters(y, K, method='quantiles'):
+def initialize_parameters(y, X, K, method='quantiles'):
     # Initialize theta as a Kx2 array, where each row represents a segment with alpha and beta parameters
     theta = np.zeros((K, 2))
     pi = np.full(K, 1.0 / K)
 
+    # Correctly aggregate log sales across all stores for each time period
+    aggregated_log_sales = np.log(y.sum(axis=0))  # Log of sum of sales across all stores
+
+    lin_reg = LinearRegression()
+    lin_reg.fit(X, aggregated_log_sales)
+    beta_init = lin_reg.coef_[0]  # Slope from linear regression
+
     if method == 'quantiles':
         for k in range(K):
-            # Set alpha (intercept) as the quantile of y
-            theta[k, 0] = np.quantile(y, (k + 1) / (K + 1))
-            # Initialize beta (slope) randomly
-            theta[k, 1] = np.random.rand()
+            # Set alpha (intercept) as the quantile of aggregated log sales
+            theta[k, 0] = np.quantile(aggregated_log_sales, (k + 1) / (K + 1))
+            # Initialize beta (slope) using linear regression result
+            theta[k, 1] = beta_init
 
     elif method == 'kmeans':
-        # Reshape y for KMeans
-        y_reshaped = y.reshape(-1, 1)
-        kmeans = KMeans(n_clusters=K, n_init=10, random_state=0).fit(y_reshaped)
+        # Reshape aggregated_log_sales for KMeans
+        aggregated_log_sales_reshaped = aggregated_log_sales.reshape(-1, 1)
+        kmeans = KMeans(n_clusters=K, n_init=10, random_state=0).fit(aggregated_log_sales_reshaped)
         centroids = kmeans.cluster_centers_.flatten()
 
         for k in range(K):
             # Set alpha (intercept) as the centroid
             theta[k, 0] = centroids[k]
-            # Initialize beta (slope) randomly
-            theta[k, 1] = np.random.rand()  # or some other method to initialize slopes
+            # Initialize beta (slope) using linear regression result
+            theta[k, 1] = beta_init
 
     return theta, pi
 
 
 # Define the EM function for iterating the E and M steps
-def EM(K, y, X, tol=1e-5, max_iter=10):
-    theta, pi = initialize_parameters(y, K, method='quantiles')
+def EM(K, y, X, tol=1e-4, max_iter=30):
+    theta, pi = initialize_parameters(y, X, K, method='quantiles')
     prev_log_likelihood = -np.inf
-    converged = False  # Flag to track convergence
+    converged = False  # Track convergence
 
     for iteration in range(max_iter):
         P = EStep(theta, pi, y, X)
@@ -144,7 +152,8 @@ def Estimate(K, y, X, n_init=10):
     best_log_likelihood = -np.inf
     best_theta, best_pi = None, None
 
-    for _ in range(n_init):
+    for iter in range(n_init):
+        print(f'Start of EM {iter} / {n_init}')
         theta, pi, log_likelihood = EM(K, y, X)
         if log_likelihood > best_log_likelihood:
             best_log_likelihood, best_theta, best_pi = log_likelihood, theta, pi
@@ -174,20 +183,22 @@ def run_analysis():
     if (prices <= 0).any():
         raise ValueError("Price data contains zeros or negative values, which are not suitable for log transformation.")
 
-    # Log-transform the prices
-    log_prices = np.log(prices)
+    # Log-transform the prices using np.log1p for numerical stability
+    log_prices = np.log1p(prices - 1)  # Subtract 1 so np.log1p will compute the natural log of prices
 
     # Create an X matrix with an intercept term and the log prices
     X = np.column_stack((np.ones(len(log_prices)), log_prices))  # X should be a T x 2 matrix
 
-    # Extract and log-transform the sales data
-    sales = data.iloc[:, 1:].values
-    log_sales = np.log(sales)
+    # Extract sales data, add a small constant to ensure all values are positive
+    sales = data.iloc[:, 1:].values + 1e-9  # Add a small constant to avoid log(0)
+
+    # Log-transform the sales data using np.log1p for numerical stability
+    log_sales = np.log1p(sales - 1)
 
     # Transpose y so that each row corresponds to a store and each column to a week
     y = log_sales.T
 
-    # Confirm that T is the number of weeks and N is the number of stores
+    # Verify that T is the number of weeks and N is the number of stores
     N, T = y.shape
     assert X.shape[0] == T, "The number of weeks (rows) in X must match the number of weeks in Y"
 
