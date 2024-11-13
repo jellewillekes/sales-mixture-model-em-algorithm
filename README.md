@@ -57,9 +57,7 @@ The following functions were implemented to estimate the model parameters:
      - Log-likelihood
      - Bayesian Information Criterion (BIC), calculated as:
 
-     $$
-     \text{BIC} = k \log(NT) - 2 \log L
-     $$
+     $$ BIC = k log(NT) - 2 log L $$
 
      where $k$ is the total number of free parameters.
    - Choose the model with the lowest BIC value as the best fit.
