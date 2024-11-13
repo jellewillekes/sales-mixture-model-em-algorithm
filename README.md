@@ -5,18 +5,17 @@ This repository contains an implementation of the Expectation-Maximization (EM) 
 ## 1. General Information
 - **Programming Language**: Python
 - **Objective**: Estimate parameters for a mixture model using the EM algorithm, without relying on pre-built mixture model libraries.
-- **Libraries**: Use libraries are `pandas`, `numpy`, and `scipy` for data processing, linear algebra, and calculating 
-  density functions.
+- **Libraries**: Use `pandas`, `numpy`, and `scipy` for data processing, linear algebra, and calculating density functions.
 
 ## 2. Model Overview
-This model analyzes sales data at the store level for a particular product. The model assumes that sales in each store depend on the price of the product, with parameters specific to each store that vary across segments. The sales data for store $i$ in week $t$ is given by:
+This model analyzes sales data at the store level for a particular product. The model assumes that sales in each store depend on the price of the product, with parameters specific to each store that vary across segments. The sales data for store *i* in week *t* is given by:
 
 $$
 \log S_{it} = \alpha_i + \beta_i \log p_t + \epsilon_{it}, \quad \epsilon_{it} \sim N(0,1)
 $$
 
 where:
-- $S_{it}$: Sales in store $i$ during week $t$.
+- $S_{it}$: Sales in store *i* during week *t*.
 - $p_t$: Price of the product, consistent across stores each week.
 
 ### Model Assumptions
@@ -58,9 +57,9 @@ The following functions were implemented to estimate the model parameters:
      - Log-likelihood
      - Bayesian Information Criterion (BIC), calculated as:
 
-     ```math
+     $$
      \text{BIC} = k \log(NT) - 2 \log L
-     ```
+     $$
 
      where $k$ is the total number of free parameters.
    - Choose the model with the lowest BIC value as the best fit.
