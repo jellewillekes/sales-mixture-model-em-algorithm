@@ -56,10 +56,11 @@ The following functions were implemented to estimate the model parameters:
      - Estimated parameters ($\theta$ and $\pi$)
      - Log-likelihood
      - Bayesian Information Criterion (BIC), calculated as:
+     
+$$
+ BIC = k \log (NT) - 2 \log L
+$$     
 
-     $$ BIC = k log(NT) - 2 log L $$
-
-     where $k$ is the total number of free parameters.
    - Choose the model with the lowest BIC value as the best fit.
 
 4. **Results Storage**: The results, including the parameters, log-likelihood, and BIC for each $K$, are saved in `results.json`.
